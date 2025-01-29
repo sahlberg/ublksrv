@@ -30,6 +30,8 @@ extern "C" {
 #define	DEF_QD		128
 #define	DEF_BUF_SIZE	(512 << 10)
 
+#define JSON_OFFSET   32
+
 /************ stored in ublksrv_ctrl_dev_info->ublksrv_flags *******/
 /*
  * target may not use io_uring for handling io, so eventfd is required
@@ -618,6 +620,20 @@ extern int ublksrv_dev_get_cq_depth(struct ublksrv_dev *dev);
  */
 extern void ublksrv_apply_oom_protection(void);
 
+/**
+ *
+ * Store the device json in the pidfile
+ */
+extern int ublksrv_tgt_store_dev_data(const struct ublksrv_dev *dev,
+				      const char *buf);
+
+/**
+ *
+ * Read the device json from the pid file
+ */
+extern char *ublksrv_tgt_get_dev_data(struct ublksrv_ctrl_dev *cdev);
+  
+  
 /** @} */ // end of ublksrv_dev group
 
 /* target json has to include the following key/value */

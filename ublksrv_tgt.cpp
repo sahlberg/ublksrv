@@ -271,64 +271,6 @@ char *ublksrv_tgt_realloc_json_buf(struct ublksrv_dev *dev, int *size)
 	return buf;
 }
 
-static int ublksrv_tgt_store_dev_data(const struct ublksrv_dev *dev,
-		const char *buf)
-{
-	int ret;
-	int len = ublksrv_json_get_length(buf);
-	int fd = ublksrv_get_pidfile_fd(dev);
-
-	if (fd < 0) {
-		ublk_err( "fail to get fd of pid file, ret %d\n",
-				fd);
-		return fd;
-	}
-
-	ret = pwrite(fd, buf, len, JSON_OFFSET);
-	if (ret <= 0)
-		ublk_err( "fail to write json data to pid file, ret %d\n",
-				ret);
-
-	return ret;
-}
-
-static char *ublksrv_tgt_get_dev_data(struct ublksrv_ctrl_dev *cdev)
-{
-	const struct ublksrv_ctrl_dev_info *info =
-		ublksrv_ctrl_get_dev_info(cdev);
-	int dev_id = info->dev_id;
-	struct stat st;
-	char pid_file[256];
-	char *buf;
-	int size, fd, ret;
-	const char *run_dir = ublksrv_ctrl_get_run_dir(cdev);
-
-	if (!run_dir)
-		return 0;
-
-	snprintf(pid_file, 256, "%s/%d.pid", run_dir, dev_id);
-	fd = open(pid_file, O_RDONLY);
-
-	if (fd <= 0)
-		return NULL;
-
-	if (fstat(fd, &st) < 0)
-		return NULL;
-
-	if (st.st_size <=  JSON_OFFSET)
-		return NULL;
-
-	size = st.st_size - JSON_OFFSET;
-	buf = (char *)malloc(size);
-	ret = pread(fd, buf, size, JSON_OFFSET);
-	if (ret <= 0)
-		fprintf(stderr, "fail to read json from %s ret %d\n",
-				pid_file, ret);
-	close(fd);
-
-	return buf;
-}
-
 static void *ublksrv_io_handler_fn(void *data)
 {
 	struct ublksrv_queue_info *info = (struct ublksrv_queue_info *)data;
