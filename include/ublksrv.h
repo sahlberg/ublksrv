@@ -31,6 +31,7 @@ extern "C" {
 #define	DEF_BUF_SIZE	(512 << 10)
 
 #define JSON_OFFSET   32
+#define UBLKSRV_PID_DIR  "/tmp/ublksrvd"
 
 /************ stored in ublksrv_ctrl_dev_info->ublksrv_flags *******/
 /*
