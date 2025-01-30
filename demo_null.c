@@ -57,6 +57,7 @@ static void *demo_null_io_handler_fn(void *data)
 	pthread_mutex_lock(&jbuf_lock);
 	ublksrv_json_write_queue_info(ublksrv_get_ctrl_dev(dev), jbuf, sizeof jbuf,
 			q_id, ublksrv_gettid());
+	ublksrv_tgt_store_dev_data(dev, jbuf);
 	pthread_mutex_unlock(&jbuf_lock);
 	q = ublksrv_queue_init(dev, q_id, NULL);
 	if (!q) {
@@ -233,6 +234,7 @@ int main(int argc, char *argv[])
 		.tgt_type = "demo_null",
 		.tgt_ops = &demo_tgt_type,
 		.flags = 0,
+		.run_dir = UBLKSRV_PID_DIR,
 	};
 	struct ublksrv_ctrl_dev *dev;
 	int ret;
