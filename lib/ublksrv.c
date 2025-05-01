@@ -424,18 +424,6 @@ void ublksrv_build_cpu_str(char *buf, int len, const cpu_set_t *cpuset)
 	}
 }
 
-static void ublksrv_set_sched_affinity(struct _ublksrv_dev *dev,
-		unsigned short q_id)
-{
-	const struct ublksrv_ctrl_dev *cdev = dev->ctrl_dev;
-	unsigned dev_id = cdev->dev_info.dev_id;
-	cpu_set_t *cpuset = ublksrv_get_queue_affinity(cdev, q_id);
-
-	if (sched_setaffinity(0, sizeof(cpu_set_t), cpuset) < 0)
-		ublk_err("ublk dev %u queue %u set affinity failed",
-				dev_id, q_id);
-}
-
 static void ublksrv_kill_eventfd(struct _ublksrv_queue *q)
 {
 	if ((q->state & UBLKSRV_QUEUE_STOPPING) && q->efd >= 0) {
@@ -677,9 +665,6 @@ skip_alloc_buf:
 					&q->private_data))
 			goto fail;
 	}
-
-	if (ctrl_dev->queues_cpuset)
-		ublksrv_set_sched_affinity(dev, q_id);
 
 	setpriority(PRIO_PROCESS, getpid(), -20);
 

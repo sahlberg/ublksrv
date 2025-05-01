@@ -153,7 +153,6 @@ void ublksrv_ctrl_deinit(struct ublksrv_ctrl_dev *dev)
 {
 	close(dev->ring.ring_fd);
 	close(dev->ctrl_fd);
-	free(dev->queues_cpuset);
 	ublksrv_ctrl_data_exit(dev);
 	free(dev->data);
 	free(dev);
@@ -218,47 +217,9 @@ struct ublksrv_ctrl_dev *ublksrv_ctrl_recover_init(struct ublksrv_dev_data *data
 	return __ublksrv_ctrl_init(data, true);
 }
 
-/* queues_cpuset is only used for setting up queue pthread daemon */
+/* This function is no longer used. */
 int ublksrv_ctrl_get_affinity(struct ublksrv_ctrl_dev *ctrl_dev)
 {
-	struct ublksrv_ctrl_cmd_data data = {
-		.cmd_op	= UBLK_CMD_GET_QUEUE_AFFINITY,
-		.flags	= CTRL_CMD_HAS_DATA | CTRL_CMD_HAS_BUF,
-	};
-	unsigned char *buf;
-	int i, ret;
-	int len;
-	int path_len;
-
-	if (ublk_is_unprivileged(ctrl_dev))
-		path_len = UBLKC_PATH_MAX;
-	else
-		path_len = 0;
-
-	len = (sizeof(cpu_set_t) + path_len) * ctrl_dev->dev_info.nr_hw_queues;
-	buf = calloc(1, len);
-
-	if (!buf)
-		return -ENOMEM;
-
-	for (i = 0; i < ctrl_dev->dev_info.nr_hw_queues; i++) {
-		data.data[0] = i;
-		data.dev_path_len = path_len;
-		data.len = sizeof(cpu_set_t) + path_len;
-		data.addr = (__u64)&buf[i * data.len];
-
-		if (path_len)
-			snprintf((char *)data.addr, UBLKC_PATH_MAX, "%s%d",
-					UBLKC_DEV, ctrl_dev->dev_info.dev_id);
-
-		ret = __ublksrv_ctrl_cmd(ctrl_dev, &data);
-		if (ret < 0) {
-			free(buf);
-			return ret;
-		}
-	}
-	ctrl_dev->queues_cpuset = (cpu_set_t *)buf;
-
 	return 0;
 }
 
@@ -705,4 +666,57 @@ void *ublksrv_ctrl_get_priv_data(const struct ublksrv_ctrl_dev *dev)
 void ublksrv_ctrl_set_priv_data(struct ublksrv_ctrl_dev *dev, void *data)
 {
 	dev->private_data = data;
+}
+
+int ublk_queue_set_affinity(int number, int qid, cpu_set_t *cpuset)
+{
+	struct ublksrv_ctrl_dev_info *info;
+	struct ublksrv_ctrl_dev *dev;
+	int ret = -EINVAL;
+	const char *jbuf;
+	unsigned tid;
+	char buf[4096];
+	struct ublksrv_dev_data data = {
+		.dev_id = number,
+		.run_dir = ublksrv_get_pid_dir(),
+	};
+
+	if (!cpuset) {
+		fprintf(stderr, "No cpuset provided\n");
+		return -EINVAL;
+	}
+
+	dev = ublksrv_ctrl_init(&data);
+	if (!dev) {
+		fprintf(stderr, "ublksrv_ctrl_init failed id %d\n", number);
+		return -EOPNOTSUPP;
+	}
+
+	ret = ublksrv_ctrl_get_info(dev);
+	if (ret < 0) {
+		fprintf(stderr, "can't get dev info from %d: %d\n", number, ret);
+		goto fail;
+	}
+
+	jbuf = ublksrv_tgt_get_dev_data(dev);
+	if (jbuf == NULL) {
+		fprintf(stderr, "can't get json from %d\n", number);
+		goto fail;
+	}
+
+	info = &dev->dev_info;
+
+	if (qid >= info->nr_hw_queues) {
+		fprintf(stderr, "qid out of range. Was %d but maximum"
+			"is %d\n", qid, info->nr_hw_queues);
+		goto fail;
+	}
+
+	ublksrv_json_read_queue_info(jbuf, qid, &tid, buf, sizeof(buf));
+	sched_setaffinity(tid, sizeof(*cpuset), cpuset);
+
+	ret = 0;
+fail:
+	ublksrv_ctrl_deinit(dev);
+	return ret;
 }

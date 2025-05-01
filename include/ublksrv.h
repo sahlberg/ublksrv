@@ -416,11 +416,7 @@ extern struct ublksrv_ctrl_dev *ublksrv_ctrl_init(struct ublksrv_dev_data *data)
 extern struct ublksrv_ctrl_dev *ublksrv_ctrl_recover_init(struct ublksrv_dev_data *data);
 
 /**
- * Retrieve and store each queue's cpu affinity info into private data of the
- * control device by sending commands to ublk control device
- *
- * @param ctrl_dev the ublksrv control device instance
- *
+ * DEPRECATED.
  */
 extern int ublksrv_ctrl_get_affinity(struct ublksrv_ctrl_dev *ctrl_dev);
 
@@ -1007,6 +1003,12 @@ extern int ublksrv_json_get_length(const char *jbuf);
  *
  *  @{
  */
+
+
+/**
+ * Set affinity for a queue
+ */
+extern int ublk_queue_set_affinity(int number, int qid, cpu_set_t *cpuset);
 
 /**
  * Return the specified io private data

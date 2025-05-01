@@ -151,9 +151,6 @@ static int null_start_daemon(struct ublksrv_ctrl_dev *ctrl_dev)
 {
 	int ret;
 
-	if (ublksrv_ctrl_get_affinity(ctrl_dev) < 0)
-		return -1;
-
 	ret = demo_null_io_handler(ctrl_dev);
 
 	return ret;

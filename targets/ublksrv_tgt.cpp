@@ -11,33 +11,8 @@ struct ublksrv_queue_info {
 	int qid;
 	pthread_t thread;
 	sem_t *queue_sem;
+	cpu_set_t *cpuset;
 };
-
-static void ublk_set_queue_pthread_affinity(const struct ublksrv_ctrl_dev *cdev,
-					    unsigned qid)
-{
-	cpu_set_t set;
-	int idx, i, j = 0;
-
-	CPU_ZERO(&set);
-	if (sched_getaffinity(0, sizeof(set), &set) == -1) {
-		ublk_err("sched_getaffinity, %s\n", strerror(errno));
-		return;
-	}
-
-	srand(ublksrv_gettid());
-	idx = rand() % CPU_COUNT(&set);
-
-	for (i = 0; i < CPU_SETSIZE; i++) {
-		if (CPU_ISSET(i, &set)) {
-			if (j++ == idx)
-				continue;
-			CPU_CLR(i, &set);
-		}
-	}
-
-	sched_setaffinity(0, sizeof(set), &set);
-}
 
 static void *ublksrv_queue_handler(void *data)
 {
@@ -50,6 +25,9 @@ static void *ublksrv_queue_handler(void *data)
 	unsigned short q_id = info->qid;
 	const struct ublksrv_queue *q;
 
+	if (info->cpuset)
+		sched_setaffinity(0, sizeof(cpu_set_t), info->cpuset);
+
 	ublk_json_write_queue_info(cdev, q_id, ublksrv_gettid());
 
 	q = ublksrv_queue_init(dev, q_id, NULL);
@@ -60,8 +38,6 @@ static void *ublksrv_queue_handler(void *data)
 		return NULL;
 	}
 
-	/* override the queue affinity by just selecting one cpu */
-	ublk_set_queue_pthread_affinity(cdev, q_id);
 	sem_post(info->queue_sem);
 
 	ublk_log("tid %d: ublk dev %d queue %d started", ublksrv_gettid(),
@@ -195,7 +171,7 @@ static int ublksrv_tgt_start_dev(struct ublksrv_ctrl_dev *cdev,
 	return 0;
 }
 
-static int ublksrv_device_handler(struct ublksrv_ctrl_dev *ctrl_dev, int evtfd)
+static int ublksrv_device_handler(struct ublksrv_ctrl_dev *ctrl_dev, cpu_set_t *sets, int evtfd)
 {
 	const struct ublksrv_ctrl_dev_info *dinfo =
 		ublksrv_ctrl_get_dev_info(ctrl_dev);
@@ -232,6 +208,8 @@ static int ublksrv_device_handler(struct ublksrv_ctrl_dev *ctrl_dev, int evtfd)
 		info_array[i].dev = dev;
 		info_array[i].qid = i;
 		info_array[i].queue_sem = &queue_sem;
+		if (sets)
+			info_array[i].cpuset = &sets[i];
 		pthread_create(&info_array[i].thread, NULL,
 				ublksrv_queue_handler,
 				&info_array[i]);
@@ -283,22 +261,15 @@ static void ublksrv_check_dev(const struct ublksrv_ctrl_dev_info *info)
 	}
 }
 
-static int ublksrv_start_daemon(struct ublksrv_ctrl_dev *ctrl_dev, int evtfd)
+static int ublksrv_start_daemon(struct ublksrv_ctrl_dev *ctrl_dev,
+				cpu_set_t *sets, int evtfd)
 {
 	const struct ublksrv_ctrl_dev_info *dinfo =
 		ublksrv_ctrl_get_dev_info(ctrl_dev);
-	int ret;
 
 	ublksrv_check_dev(dinfo);
 
-	ret = ublksrv_ctrl_get_affinity(ctrl_dev);
-	if (ret < 0) {
-		fprintf(stderr, "dev %d get affinity failed %d\n",
-				dinfo->dev_id, ret);
-		return ret;
-	}
-
-	return ublksrv_device_handler(ctrl_dev, evtfd);
+	return ublksrv_device_handler(ctrl_dev, sets, evtfd);
 }
 
 //todo: resolve stack usage warning for mkpath/__mkpath
@@ -335,7 +306,7 @@ static int mkpath(const char *dir)
  * This function parses all the standard options that all targets support
  * and populates ublksrv_dev_data.
  */
-static int ublksrv_parse_add_opts(struct ublksrv_dev_data *data, int *efd, int argc, char *argv[])
+static int ublksrv_parse_add_opts(struct ublksrv_dev_data *data, int *efd, const char **cpuset, int argc, char *argv[])
 {
 	int opt;
 	int uring_comp = 0;
@@ -358,6 +329,7 @@ static int ublksrv_parse_add_opts(struct ublksrv_dev_data *data, int *efd, int a
 		{ "user_recovery_fail_io",	1,	NULL, 'e'},
 		{ "user_recovery_reissue",	1,	NULL, 'i'},
 		{ "debug_mask",	1,	NULL, 0},
+		{ "cpuset",	1,	NULL, 0},
 		{ "unprivileged",	0,	NULL, 0},
 		{ "usercopy",	0,	NULL, 0},
 		{ "eventfd",	1,	NULL, 0},
@@ -406,6 +378,8 @@ static int ublksrv_parse_add_opts(struct ublksrv_dev_data *data, int *efd, int a
 			user_recovery_reissue = strtol(optarg, NULL, 10);
 			break;
 		case 0:
+			if (!strcmp(longopts[option_index].name, "cpuset"))
+				*cpuset = optarg;
 			if (!strcmp(longopts[option_index].name, "debug_mask"))
 				debug_mask = strtol(optarg, NULL, 16);
 			if (!strcmp(longopts[option_index].name, "unprivileged"))
@@ -439,7 +413,6 @@ static int ublksrv_parse_add_opts(struct ublksrv_dev_data *data, int *efd, int a
 		data->flags |= UBLK_F_SUPPORT_ZERO_COPY;
 
 	ublk_set_debug_mask(debug_mask);
-
 	return 0;
 }
 
@@ -449,15 +422,18 @@ void ublksrv_print_std_opts(void)
 	printf("\t-u URING_COMP -g NEED_GET_DATA -r USER_RECOVERY\n");
 	printf("\t-i USER_RECOVERY_REISSUE -e USER_RECOVERY_FAIL_IO\n");
 	printf("\t--debug_mask=0x{DBG_MASK} --unprivileged\n");
+	printf("\t--cpuset=\"[CPUSET0],...\"\n");
 }
 
 static int ublksrv_cmd_dev_add(const struct ublksrv_tgt_type *tgt_type, int argc, char *argv[])
 {
 	struct ublksrv_dev_data data = {0};
 	struct ublksrv_ctrl_dev *dev;
+	const char *cpuset = NULL;
+	cpu_set_t *sets = NULL;
 	int ret, evtfd = -1;
 
-	ublksrv_parse_add_opts(&data, &evtfd, argc, argv);
+	ublksrv_parse_add_opts(&data, &evtfd, &cpuset, argc, argv);
 
 	if (data.tgt_type && strcmp(data.tgt_type, tgt_type->name)) {
 		fprintf(stderr, "Wrong tgt_type specified\n");
@@ -478,6 +454,13 @@ static int ublksrv_cmd_dev_add(const struct ublksrv_tgt_type *tgt_type, int argc
 		fprintf(stderr, "can't init dev %d\n", data.dev_id);
 		ret = -EOPNOTSUPP;
 		goto fail_send_event;
+	}
+
+	if (cpuset) {
+		const struct ublksrv_ctrl_dev_info *dinfo =
+			ublksrv_ctrl_get_dev_info(dev);
+
+		sets = ublk_make_cpuset(dinfo->nr_hw_queues, cpuset);
 	}
 
 	if (data.flags & UBLK_F_SUPPORT_ZERO_COPY) {
@@ -501,7 +484,7 @@ static int ublksrv_cmd_dev_add(const struct ublksrv_tgt_type *tgt_type, int argc
 			ublksrv_ctrl_get_dev_info(dev);
 		data.dev_id = info->dev_id;
 	}
-	ret = ublksrv_start_daemon(dev, evtfd);
+	ret = ublksrv_start_daemon(dev, sets, evtfd);
 	if (ret < 0) {
 		fprintf(stderr, "start dev %d daemon failed, ret %d\n",
 				data.dev_id, ret);
@@ -509,6 +492,7 @@ static int ublksrv_cmd_dev_add(const struct ublksrv_tgt_type *tgt_type, int argc
 	}
 
 	ublksrv_ctrl_deinit(dev);
+	free(sets);
 	return 0;
 
  fail_del_dev:
@@ -517,6 +501,7 @@ static int ublksrv_cmd_dev_add(const struct ublksrv_tgt_type *tgt_type, int argc
 	ublksrv_ctrl_deinit(dev);
  fail_send_event:
 	ublksrv_tgt_send_dev_event(evtfd, -1);
+	free(sets);
 
 	return ret;
 }
@@ -535,7 +520,7 @@ char *ublksrv_pop_cmd(int *argc, char *argv[])
 }
 
 static int __cmd_dev_user_recover(const struct ublksrv_tgt_type *tgt_type,
-		int number, bool verbose, int evtfd)
+		int number, bool verbose, int evtfd, const char *cpuset)
 {
 	struct ublksrv_dev_data data = {
 		.dev_id = number,
@@ -549,6 +534,7 @@ static int __cmd_dev_user_recover(const struct ublksrv_tgt_type *tgt_type,
 	char *buf = NULL;
 	int ret;
 	unsigned elapsed = 0;
+	cpu_set_t *sets = NULL;
 
 	dev = ublksrv_ctrl_recover_init(&data);
 	if (!dev) {
@@ -558,6 +544,13 @@ static int __cmd_dev_user_recover(const struct ublksrv_tgt_type *tgt_type,
 	}
 
 	ret = ublksrv_ctrl_get_info(dev);
+	if (*cpuset) {
+		const struct ublksrv_ctrl_dev_info *dinfo =
+			ublksrv_ctrl_get_dev_info(dev);
+
+		sets = ublk_make_cpuset(dinfo->nr_hw_queues, cpuset);
+	}
+
 	if (ret < 0) {
 		fprintf(stderr, "can't get dev info from %d\n", number);
 		goto fail;
@@ -602,7 +595,7 @@ static int __cmd_dev_user_recover(const struct ublksrv_tgt_type *tgt_type,
 		goto fail;
 	}
 
-	ret = ublksrv_start_daemon(dev, evtfd);
+	ret = ublksrv_start_daemon(dev, sets, evtfd);
 	if (ret < 0) {
 		fprintf(stderr, "start daemon %d failed\n", number);
 		goto fail;
@@ -613,6 +606,7 @@ static int __cmd_dev_user_recover(const struct ublksrv_tgt_type *tgt_type,
 	ublksrv_ctrl_deinit(dev);
  exit:
 	ublksrv_tgt_send_dev_event(evtfd, -1);
+	free(sets);
 	return ret;
 }
 
@@ -621,6 +615,7 @@ static int ublksrv_cmd_dev_user_recover(const struct ublksrv_tgt_type *tgt_type,
 	static const struct option longopts[] = {
 		{ "number",		0,	NULL, 'n' },
 		{ "verbose",	0,	NULL, 'v' },
+		{ "cpuset",	1,	NULL, 0},
 		{ "eventfd",	1,	NULL, 0},
 		{ NULL }
 	};
@@ -629,6 +624,7 @@ static int ublksrv_cmd_dev_user_recover(const struct ublksrv_tgt_type *tgt_type,
 	int opt;
 	bool verbose = false;
 	int evtfd = -1;
+	const char *cpuset = NULL;
 
 	while ((opt = getopt_long(argc, argv, "n:v",
 				  longopts, &option_index)) != -1) {
@@ -640,12 +636,15 @@ static int ublksrv_cmd_dev_user_recover(const struct ublksrv_tgt_type *tgt_type,
 			verbose = true;
 			break;
 		case 0:
+			if (!strcmp(longopts[option_index].name, "cpuset"))
+				cpuset = optarg;
 			if (!strcmp(longopts[option_index].name, "eventfd"))
 				evtfd = strtol(optarg, NULL, 10);
 		}
 	}
 
-	return __cmd_dev_user_recover(tgt_type, number, verbose, evtfd);
+	return __cmd_dev_user_recover(tgt_type, number, verbose,
+				      evtfd, cpuset);
 }
 
 static void cmd_usage(const struct ublksrv_tgt_type *tgt_type)

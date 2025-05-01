@@ -43,7 +43,7 @@ The following commands are supported:
 .PP
 Command to add a ublk device\&.
 .PP
-\fB add {\-t, \-\-type} TYPE [{\-n, \-\-number} DEV_ID] [{\-q, \-\-queues} NR_HW_QUEUES] [{\-d, \-\-depth} QUEUE_DEPTH] [{\-u, \-\-uring_comp} URING_COMP] [{\-g, \-\-need\-get\-data} NEED_GET_DATA] [{\-r, \-\-user_recovery} {0|1}] [{\-i, \-\-user_recovery_reissue} {0|1}] [{\-e, \-\-user_recovery_fail_io} {0|1}] [\-\-debug_mask=0x{DBG_MASK}] [\-\-unprivileged] [\-\-usercopy] [{\-z, \-\-zerocopy}] [<type specific options>] \fR
+\fB add {\-t, \-\-type} TYPE [{\-n, \-\-number} DEV_ID] [{\-q, \-\-queues} NR_HW_QUEUES] [{\-d, \-\-depth} QUEUE_DEPTH] [{\-u, \-\-uring_comp} URING_COMP] [{\-g, \-\-need\-get\-data} NEED_GET_DATA] [{\-r, \-\-user_recovery} {0|1}] [{\-i, \-\-user_recovery_reissue} {0|1}] [{\-e, \-\-user_recovery_fail_io} {0|1}] [\-\-debug_mask=0x{DBG_MASK}] [\-\-unprivileged] [\-\-cpuset="[SET0],[SET1],\&.\&.\&."] [\-\-usercopy] [{\-z, \-\-zerocopy}] [<type specific options>] \fR
 .PP
 \fB\-t, \-\-type\fR
 .RS 4
@@ -111,6 +111,28 @@ Then ublk server can be run as unprivileged user, and /dev/ublkbN can be accesse
 \fB\-\-user_copy\fR
 .RS 4
 Copy between request and user buffer by pread()/pwrite()
+.RE
+.PP
+\fB\-\-cpuset="[SET0],[SET1],\&.\&.\&."\fR
+.RS 4
+Cpuset is used to specify which cpu(s) a queue will be assigned to\&. By pinning a queue to a specific core(s) that is close to related processing can improve performance\&.
+.sp
+Each queue has an entry wrapped in \*(Aq[\*(Aq \*(Aq]\*(Aq containing a comma separated list of cores that the cue is assigned to\&.
+
+Example: Create a a loop device with 2 queues where the first queue
+is set to use CPUs 3 and 5 and the second que is using CPU 4\&.
+  
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+    # ublk add \-t loop \-n 0 \-f /tmp/file\&.raw \-\-cpuset="[3,5],[4]"
+  
+.fi
+.if n \{\
+.RE
+.\}
 .RE
 .PP
 \fB\-z, \-\-zerocopy\fR
@@ -277,6 +299,40 @@ Example: Deleting a loop block device
 .RE
 .\}
 .sp
+.SH "SET_AFFINITY COMMAND"
+.PP
+Command to change queue affinity\&.
+.PP
+\fB set_affinity {\-n, \-\-number} DEV_ID [\-q, \-\-queue] QID \-\-cpuset="[SET]" \fR
+.PP
+\fB\-n, \-\-number\fR
+.RS 4
+Change the affinity on this device\&.
+.RE
+.PP
+\fB\-q, \-\-queue\fR
+.RS 4
+Which queue to change the affinity for\&.
+.RE
+.PP
+\fB\-\-cpuset="[SET]"\fR
+.RS 4
+The new cpuset for this device/queue\&. Format is a comma\-separated list of CPUs within squre brackets\&.
+.RE
+.PP
+Example: Set affinity to core 7 for device 0, queue 1
+.sp
+.if n \{\
+.RS 4
+.\}
+.nf
+    # ublk set_affinity \-n 0 \-q 1 \-\-cpuset="[7]"
+  
+.fi
+.if n \{\
+.RE
+.\}
+.sp
 .SH "LIST COMMAND"
 .PP
 List one or all devices and show their configutaion\&.
@@ -296,11 +352,18 @@ Verbose listing\&. Include the JSON device arguments in the output\&.
 .PP
 Recover a failed ublk device\&.
 .PP
-\fB recover {\-n, \-\-number} DEV_ID \fR
+\fB recover {\-n, \-\-number} DEV_ID [\-\-cpuset="[SET0],[SET1],\&.\&.\&."] \fR
 .PP
 \fB\-n, \-\-number\fR
 .RS 4
 Device to recover\&.
+.RE
+.PP
+\fB\-\-cpuset="[SET0],[SET1],\&.\&.\&."\fR
+.RS 4
+Cpuset is used to specify which cpu(s) a queue will be assigned to\&. By pinning a queue to a specific core(s) that is close to related processing can improve performance\&.
+.sp
+Each queue has an entry wrapped in \*(Aq[\*(Aq \*(Aq]\*(Aq containing a comma separated list of cores that the cue is assigned to\&.
 .RE
 .SH "FEATURES COMMAND"
 .PP

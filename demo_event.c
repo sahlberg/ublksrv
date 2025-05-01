@@ -444,9 +444,6 @@ fail:
 
 static int event_start_daemon(struct ublksrv_ctrl_dev *ctrl_dev)
 {
-	if (ublksrv_ctrl_get_affinity(ctrl_dev) < 0)
-		return -1;
-
 	return demo_event_io_handler(ctrl_dev);
 }
 
