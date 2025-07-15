@@ -8,6 +8,8 @@
 #include "ublksrv_priv.h"
 #include "ublksrv_aio.h"
 
+#define UBLK_OP_EVENTFD    0
+
 bool ublksrv_is_recovering(const struct ublksrv_ctrl_dev *ctrl_dev)
 {
 	return ctrl_dev->tgt_argc == -1 || ctrl_dev->data->recover;
@@ -241,7 +243,7 @@ static inline int __ublksrv_queue_event(struct _ublksrv_queue *q)
 {
 	if (q->efd >= 0) {
 		struct io_uring_sqe *sqe;
-		__u64 user_data = build_eventfd_data();
+		__u64 user_data = build_eventfd_data(UBLK_OP_EVENTFD);
 
 		if (q->state & UBLKSRV_QUEUE_STOPPING)
 			return -EINVAL;
@@ -837,8 +839,12 @@ static inline void ublksrv_handle_tgt_cqe(struct _ublksrv_queue *q,
 	}
 
 	if (is_eventfd_io(cqe->user_data)) {
-		if (q->tgt_ops->handle_event)
-			q->tgt_ops->handle_event(local_to_tq(q));
+		switch ((cqe->user_data >> 16) & 0xff) {
+		case UBLK_OP_EVENTFD:
+			if (q->tgt_ops->handle_event)
+				q->tgt_ops->handle_event(local_to_tq(q));
+			return;
+		}
 	} else {
 		if (q->tgt_ops->tgt_io_done)
 			q->tgt_ops->tgt_io_done(local_to_tq(q),
